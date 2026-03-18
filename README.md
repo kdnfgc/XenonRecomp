@@ -257,4 +257,5 @@ On Windows, you can use the clang-cl toolset and open the project in Visual Stud
 
 ## Special Thanks
 
-This project could not have been possible without the [Xenia](https://github.com/xenia-project/xenia) emulator, as many parts of the CPU code conversion process has been implemented by heavily referencing its PPC code translator. The project also uses code from [Xenia Canary](https://github.com/xenia-canary/xenia-canary) to patch XEX binaries.
+This project could not have been possible without the [Xenia](https://github.com/xenia-project/xenia) emulator, as many parts of the CPU code conversion process has been implemented by heavily referencing its PPC code translator. This implementation in particular has taken a few functions from [Fable2Recomp](https://github.com/Fable2Recomp/XenonRecomp). The project also uses code from [Xenia Canary](https://github.com/xenia-canary/xenia-canary) to patch XEX binaries.
+
