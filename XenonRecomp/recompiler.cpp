@@ -2,6 +2,8 @@
 #include "recompiler.h"
 #include <xex_patcher.h>
 
+//TODO: Implement vpkukum, bsolr, vcmpgtuw, vaddsws, cror, crorc, vrlh, viminuw, lhbrx, vaddsbs, vcmpgtsh, vpkshss, bnslr
+
 static uint64_t ComputeMask(uint32_t mstart, uint32_t mstop)
 {
     mstart &= 0x3F;
@@ -737,6 +739,22 @@ bool Recompiler::Recompile(
     case PPC_INST_BNELR:
         println("\tif (!{}.eq) return;", cr(insn.operands[0]));
         break;
+        
+    case PPC_INST_BNS:
+    printConditionalBranch(false, "so");
+    break;
+
+    case PPC_INST_BNSLR:
+    //no op
+    break
+    
+    case PPC_INST_BSO:
+    printConditionalBranch(true, "so");
+    break;
+    
+    case PPC_INST_BSOLR:
+    //no op
+    break;
 
     case PPC_INST_CCTPL:
         // no op
