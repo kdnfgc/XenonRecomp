@@ -592,9 +592,9 @@ bool Recompiler::Recompile(
         println("\t{}.compare<int32_t>({}.s32, 0, {});", cr(0), r(insn.operands[0]), xer());
         break;
 
-    case PPC_INST_ATTN:
+    //case PPC_INST_ATTN:
         // undefined instruction
-        break;
+      //  break;
 
     case PPC_INST_B:
         if (insn.operands[0] < fn.base || insn.operands[0] >= fn.base + fn.size)
@@ -813,6 +813,14 @@ bool Recompiler::Recompile(
     case PPC_INST_CNTLZW:
         println("\t{0}.u64 = {1}.u32 == 0 ? 32 : __builtin_clz({1}.u32);", r(insn.operands[0]), r(insn.operands[1]));
         break;
+
+    //case PPC_INST_CROR
+        //
+        //break;  
+        
+    //case PPC_INST_CRORC
+    //
+    //break;    
 
     //case PPC_INST_DB16CYC:
         // no op
