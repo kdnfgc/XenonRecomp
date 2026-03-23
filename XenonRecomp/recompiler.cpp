@@ -2,7 +2,7 @@
 #include "recompiler.h"
 #include <xex_patcher.h>
 
-//TODO: Implement dcbt, vpkukum, twllei, twlgei, bsolr, cror, crorc, db16cyc, twi, eieio, sync, nop, tdllei, tdlgei, bnslr
+//TODO: Implement dcbt, vpkukum, twllei, twlgei, cror, crorc, db16cyc, twi, eieio, sync, tdllei, tdlgei
 
 static uint64_t ComputeMask(uint32_t mstart, uint32_t mstop)
 {
@@ -741,20 +741,20 @@ bool Recompiler::Recompile(
         break;
         
     case PPC_INST_BNS:
-    printConditionalBranch(false, "so");
-    break;
-
-    //case PPC_INST_BNSLR:
-    //no op
-    //break;
-    
-    case PPC_INST_BSO:
     printConditionalBranch(true, "so");
     break;
+
+    case PPC_INST_BNSLR:
+    println("\tif (!{}.eq) return;", cr(insn.operands[0]));
+    break;
     
-    //case PPC_INST_BSOLR:
-    //no op
-    //break;
+    case PPC_INST_BSO:
+    printConditionalBranch(false, "so");
+    break;
+    
+    case PPC_INST_BSOLR:
+    println("\tif ({}.so) return;", cr(insn.operands[0]));
+    break;
 
     //case PPC_INST_CCTPL:
         // no op
@@ -1377,9 +1377,9 @@ bool Recompiler::Recompile(
             println("\t{}.compare<int32_t>({}.s32, 0, {});", cr(0), r(insn.operands[0]), xer());
         break;
 
-    //case PPC_INST_NOP:
+    case PPC_INST_NOP:
         // no op
-    //    break;
+        break;
 
     case PPC_INST_NOR:
         println("\t{}.u64 = ~({}.u64 | {}.u64);", r(insn.operands[0]), r(insn.operands[1]), r(insn.operands[2]));
@@ -1628,52 +1628,70 @@ bool Recompiler::Recompile(
         println("{}.u32, {}.u16);", r(insn.operands[2]), r(insn.operands[0]));
         break;
 
-    case PPC_INST_STVEHX:
-        // TODO: vectorize
-        // NOTE: accounting for the full vector reversal here
-        print("\t{} = (", ea());
-        if (insn.operands[1] != 0)
-            print("{}.u32 + ", r(insn.operands[1]));
-        println("{}.u32) & ~0x1;", r(insn.operands[2]));
-        println("\tPPC_STORE_U16(ea, {}.u16[7 - (({} & 0xF) >> 1)]);", v(insn.operands[0]), ea());
-        break;
+    case PPC_INST_STVEHX: {
+    // Begin PPC_STORE_U16 call
+    print("\tPPC_STORE_U16((");
+    if (insn.operands[1] != 0)
+        print("{}.u32 + ", r(insn.operands[1]));
+    print("{}.u32) & ~0x1, ", r(insn.operands[2]));
+
+    // Correct parenthesis balancing here
+    print("simd::extract_u16(simd::to_vec128i({}), 7 - (((", v(insn.operands[0]));
+    if (insn.operands[1] != 0)
+        print("{}.u32 + ", r(insn.operands[1]));
+    println("{}.u32) & 0xF) >> 1)));", r(insn.operands[2]));  // ← One extra closing paren added
+    break;
+}
 
     case PPC_INST_STVEWX:
-    case PPC_INST_STVEWX128:
-        // TODO: vectorize
-        // NOTE: accounting for the full vector reversal here
-        print("\t{} = (", ea());
-        if (insn.operands[1] != 0)
-            print("{}.u32 + ", r(insn.operands[1]));
-        println("{}.u32) & ~0x3;", r(insn.operands[2]));
-        println("\tPPC_STORE_U32(ea, {}.u32[3 - (({} & 0xF) >> 2)]);", v(insn.operands[0]), ea());
-        break;
+    case PPC_INST_STVEWX128: {
+    // Begin PPC_STORE_U32 call
+    print("\tPPC_STORE_U32((");
+    if (insn.operands[1] != 0)
+        print("{}.u32 + ", r(insn.operands[1]));
+    print("{}.u32) & ~0x3, ", r(insn.operands[2]));
+
+    // Complete simd::extract_u32 call
+    print("simd::extract_u32(*reinterpret_cast<const simd::vec128i*>(&{}.u32), 3 - ((", v(insn.operands[0]));
+    if (insn.operands[1] != 0)
+        print("{}.u32 + ", r(insn.operands[1]));
+    println("{}.u32) & 0xF) >> 2));", r(insn.operands[2]));
+    break;
+}
 
     case PPC_INST_STVLX:
+    case PPC_INST_STVLXL:
     case PPC_INST_STVLX128:
-        // TODO: vectorize
-        // NOTE: accounting for the full vector reversal here
-        print("\t{} = ", ea());
+    case PPC_INST_STVLXL128: {
+        println("{{"); // ← Start a scoped block
+        println("\tuint32_t addr = ");
         if (insn.operands[1] != 0)
-            print("{}.u32 + ", r(insn.operands[1]));
-        println("{}.u32;", r(insn.operands[2]));
+        print("{}.u32 + ", r(insn.operands[1]));
+    println("{}.u32;", r(insn.operands[2]));
 
-        println("\tfor (size_t i = 0; i < (16 - ({} & 0xF)); i++)", ea());
-        println("\t\tPPC_STORE_U8({} + i, {}.u8[15 - i]);", ea(), v(insn.operands[0]));
-        break;
+    println("\tuint32_t tmp_off = addr & 0xF;");
+    println("\tfor (size_t i = 0; i < (16 - tmp_off); i++)");
+    println("\t\tPPC_STORE_U8(addr + i, simd::extract_u8(simd::to_vec128i({}), 15 - i));", v(insn.operands[0]));
+    println("}}");
+    break;
+}
 
     case PPC_INST_STVRX:
+    case PPC_INST_STVRXL:
     case PPC_INST_STVRX128:
-        // TODO: vectorize
-        // NOTE: accounting for the full vector reversal here
-        print("\t{} = ", ea());
-        if (insn.operands[1] != 0)
-            print("{}.u32 + ", r(insn.operands[1]));
-        println("{}.u32;", r(insn.operands[2]));
+    case PPC_INST_STVRXL128: {
+        println("{{");
+        println("\tuint32_t addr = ");
+            if (insn.operands[1] != 0)
+        print("{}.u32 + ", r(insn.operands[1]));
+    println("{}.u32;", r(insn.operands[2]));
 
-        println("\tfor (size_t i = 0; i < ({} & 0xF); i++)", ea());
-        println("\t\tPPC_STORE_U8({} - i - 1, {}.u8[i]);", ea(), v(insn.operands[0]));
-        break;
+    println("\tuint32_t tmp_off = addr & 0xF;");
+    println("\tfor (size_t i = 0; i < tmp_off; i++)");
+    println("\t\tPPC_STORE_U8(addr - i - 1, simd::extract_u8(simd::to_vec128i({}), i));", v(insn.operands[0]));
+    println("}}");
+    break;
+}
 
     case PPC_INST_STVX:
     case PPC_INST_STVX128:
@@ -1981,19 +1999,16 @@ bool Recompiler::Recompile(
 
     case PPC_INST_VEXPTEFP:
     case PPC_INST_VEXPTEFP128:
-        // TODO: vectorize
         printSetFlushMode(true);
-        for (size_t i = 0; i < 4; i++)
-            println("\t{}.f32[{}] = exp2f({}.f32[{}]);", v(insn.operands[0]), i, v(insn.operands[1]), i);
+        println("\tsimd::store_f32({}.f32, simd::log2_f32(simd::to_vec128f({})));", v(insn.operands[0]), v(insn.operands[1]));
         break;
 
     case PPC_INST_VLOGEFP:
     case PPC_INST_VLOGEFP128:
-        // TODO: vectorize
-        printSetFlushMode(true);
-        for (size_t i = 0; i < 4; i++)
-            println("\t{}.f32[{}] = log2f({}.f32[{}]);", v(insn.operands[0]), i, v(insn.operands[1]), i);
-        break;
+    printSetFlushMode(true);
+    println("\tsimd::store_f32({}.f32, simd::log2_f32(simd::to_vec128f({})));", 
+        v(insn.operands[0]), v(insn.operands[1]));
+    break;
 
     case PPC_INST_VMADDCFP128:
     case PPC_INST_VMADDFP:
@@ -2257,10 +2272,9 @@ bool Recompiler::Recompile(
         break;
 
     case PPC_INST_VSLB:
-        // TODO: vectorize
-        for (size_t i = 0; i < 16; i++)
-            println("\t{}.u8[{}] = {}.u8[{}] << ({}.u8[{}] & 0x7);", v(insn.operands[0]), i, v(insn.operands[1]), i, v(insn.operands[2]), i);
-        break;
+    println("\tsimd::store_shifted_i8({}, {}, {});",
+        v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
+    break;
 
     case PPC_INST_VSLDOI:
     case PPC_INST_VSLDOI128:
@@ -2285,10 +2299,10 @@ bool Recompiler::Recompile(
 
     case PPC_INST_VSLW:
     case PPC_INST_VSLW128:
-        // TODO: vectorize, ensure endianness is correct
-        for (size_t i = 0; i < 4; i++)
-            println("\t{}.u32[{}] = {}.u32[{}] << ({}.u8[{}] & 0x1F);", v(insn.operands[0]), i, v(insn.operands[1]), i, v(insn.operands[2]), i * 4);
-        break;
+        printSetFlushMode(true);
+        println("\tsimd::to_vec128i({}) = simd::shift_left_variable_i32(simd::to_vec128i({}), simd::to_vec128i({}));",
+        v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
+    break;
 
     case PPC_INST_VSPLTB:
     {
@@ -2356,18 +2370,21 @@ bool Recompiler::Recompile(
     }    
 
     case PPC_INST_VSRAW:
-    case PPC_INST_VSRAW128:
-        // TODO: vectorize, ensure endianness is correct
-        for (size_t i = 0; i < 4; i++)
-            println("\t{}.s32[{}] = {}.s32[{}] >> ({}.u8[{}] & 0x1F);", v(insn.operands[0]), i, v(insn.operands[1]), i, v(insn.operands[2]), i * 4);
-        break;
+    case PPC_INST_VSRAW128: {
+        printSetFlushMode(true);
+        println("simd::store_shuffled({}, simd::shift_right_arithmetic_i32(simd::to_vec128i({}), simd::and_u32(simd::to_vec128i({}), simd::set1_i32(0x1F))));",
+        v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
+    break;
+        }
+
 
     case PPC_INST_VSRW:
-    case PPC_INST_VSRW128:
-        // TODO: vectorize, ensure endianness is correct
-        for (size_t i = 0; i < 4; i++)
-            println("\t{}.u32[{}] = {}.u32[{}] >> ({}.u8[{}] & 0x1F);", v(insn.operands[0]), i, v(insn.operands[1]), i, v(insn.operands[2]), i * 4);
-        break;
+    case PPC_INST_VSRW128: {
+        printSetFlushMode(true);
+        println("simd::store_shuffled({}, simd::shift_right_logical_i32(simd::to_vec128i({}), simd::and_u32(simd::to_vec128i({}), simd::set1_i32(0x1F))));",
+        v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
+    break;
+    }
 
     case PPC_INST_VSUBFP:
     case PPC_INST_VSUBFP128:
@@ -2381,13 +2398,10 @@ bool Recompiler::Recompile(
         break;    
 
     case PPC_INST_VSUBSWS:
-        // TODO: vectorize
-        for (size_t i = 0; i < 4; i++)
-        {
-            println("\t{}.s64 = int64_t({}.s32[{}]) - int64_t({}.s32[{}]);", temp(), v(insn.operands[1]), i, v(insn.operands[2]), i);
-            println("\t{}.s32[{}] = {}.s64 > INT_MAX ? INT_MAX : {}.s64 < INT_MIN ? INT_MIN : {}.s64;", v(insn.operands[0]), i, temp(), temp(), temp());
-        }
-        break;
+    printSetFlushMode(true);
+    println("\tsimd::store_i32({}.u32, simd::sub_saturate_i32(simd::to_vec128i({}), simd::to_vec128i({})));",
+        v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
+    break;
 
     case PPC_INST_VSUBUBS:
         println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_subs_epu8(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
